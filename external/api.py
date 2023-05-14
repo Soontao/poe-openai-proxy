@@ -1,5 +1,5 @@
 import poe
-import toml
+import envtoml as toml
 import os
 import sys
 from flask import Flask, request
@@ -28,22 +28,17 @@ config = toml.load(config_path)
 proxy = config["proxy"]
 timeout = config["timeout"]
 
-
 def get_client(token) -> Client:
     print("Connecting to poe...")
     client_poe = poe.Client(token, proxy=None if proxy == "" else proxy)
     return client_poe
-
 
 app = Flask(__name__)
 sock = Sock(app)
 sock.init_app(app)
 client_dict = {}
 
-
-@app.route('/add_token', methods=['GET', 'POST'])
-def add_token():
-    token = request.form['token']
+def _register_token(token): 
     if token not in client_dict.keys():
         try:
             c = get_client(token)
@@ -55,12 +50,18 @@ def add_token():
     else:
         return "exist"
 
+@app.route('/add_token', methods=['GET', 'POST'])
+def add_token():
+    token = request.form['token']
+    return _register_token(token)
+
 
 @app.route('/ask', methods=['GET', 'POST'])
 def ask():
     token = request.form['token']
     bot = request.form['bot']
     content = request.form['content']
+    _register_token(token)
     for chunk in client_dict[token].send_message(bot, content, with_chat_break=True, timeout=timeout):
         pass
     return chunk["text"].strip()
@@ -71,6 +72,7 @@ def stream(ws):
     token = ws.receive()
     bot = ws.receive()
     content = ws.receive()
+    _register_token(token)
     for chunk in client_dict[token].send_message(bot, content, with_chat_break=True, timeout=timeout):
         ws.send(chunk["text_new"])
     ws.close()
