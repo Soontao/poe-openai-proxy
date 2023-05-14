@@ -2,7 +2,7 @@ FROM python:3.9-alpine
 
 WORKDIR /app
 
-RUN apk add build-base
+RUN apk add build-base linux-headers
 
 COPY . .
 
