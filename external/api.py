@@ -2,7 +2,7 @@ import poe
 import envtoml as toml
 import os
 import sys
-from flask import Flask, request
+from flask import Flask, request, stream_with_context, Response
 from flask_sock import Sock
 from poe import Client
 
@@ -52,19 +52,35 @@ def _register_token(token):
 
 @app.route('/add_token', methods=['GET', 'POST'])
 def add_token():
-    token = request.form['token']
+    token = request.values['token']
     return _register_token(token)
 
 
 @app.route('/ask', methods=['GET', 'POST'])
 def ask():
-    token = request.form['token']
-    bot = request.form['bot']
-    content = request.form['content']
+    token = request.values['token']
+    bot = request.values['bot']
+    content = request.values['content']
     _register_token(token)
-    for chunk in client_dict[token].send_message(bot, content, with_chat_break=True, timeout=timeout):
+    client = client_dict[token]
+    for chunk in client.send_message(bot, content, with_chat_break=True, timeout=timeout):
         pass
-    return chunk["text"].strip()
+    return Response(chunk["text"].strip(), content_type="text/plain")
+
+@app.route('/ask_stream', methods=['GET', 'POST'])
+def ask_stream():
+    token = request.values['token']
+    bot = request.values['bot']
+    content = request.values['content']
+    _register_token(token)
+    client = client_dict[token]
+
+    @stream_with_context
+    def generate():
+        for chunk in client.send_message(bot, content, with_chat_break=True, timeout=timeout):
+            yield chunk["text_new"]
+
+    return Response(generate(), content_type="text/plain")
 
 
 @sock.route('/stream')
@@ -73,7 +89,8 @@ def stream(ws):
     bot = ws.receive()
     content = ws.receive()
     _register_token(token)
-    for chunk in client_dict[token].send_message(bot, content, with_chat_break=True, timeout=timeout):
+    client = client_dict[token]
+    for chunk in client.send_message(bot, content, with_chat_break=True, timeout=timeout):
         ws.send(chunk["text_new"])
     ws.close()
 

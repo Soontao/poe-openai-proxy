@@ -1,0 +1,4 @@
+proxy = "$PROXY"
+rate-limit = 30
+cool-down = 3
+timeout = 5000
