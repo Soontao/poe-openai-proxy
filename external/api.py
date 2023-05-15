@@ -87,24 +87,36 @@ def chat_completion():
   stream = body.get("stream", False)
   content = "\n".join(
       map(lambda m: "{}: {}".format(m.get("role"), m.get("content")), messages))
+  id = str(uuid.uuid4())
+  created = int(time.time()) * 1000,
   if stream:
     def stream():
       for chunk in client.send_message(default_bot, content, with_chat_break=True, timeout=timeout):
-        yield chunk["text_new"]
+        delta_content = json.dumps({
+            "id": id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": "gpt-3.5-turbo-0301",
+            "choices": [
+                {"delta": {"content": chunk["text_new"]},
+                 "index":0, "finish_reason":"stop"}
+            ]})
+        yield "data: {}\r\n\r\n".format(delta_content)
+      yield "data: [DONE]\r\n\r\n"
     return Response(stream(), mimetype='text/event-stream')
 
   else:
-    
+
     for chunk in client.send_message(default_bot, content, with_chat_break=True, timeout=timeout):
       pass
     resp_content = chunk['text'].strip()
     prompt_tokens = len(tiktoken_encoding.encode(content))
     completion_tokens = len(tiktoken_encoding.encode(resp_content))
-    
+
     return {
-        "id": uuid.uuid4(),
+        "id": id,
         "object": "chat.completion",
-        "created": int(time.time()) * 1000,
+        "created": created,
         "model": default_bot,
         "choices": [
             {
