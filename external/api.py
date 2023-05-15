@@ -77,7 +77,7 @@ def ask_stream():
   return Response(generate_response(), content_type="text/plain")
 
 
-@app.post('/chat/completions')
+@app.post('/v1/chat/completions')
 def chat_completion():
   token = request.headers.get("authorization").removeprefix("Bearer ")
   client = _register_token(token)
