@@ -99,7 +99,7 @@ def chat_completion():
     return {
         "id": uuid.uuid4(),
         "object": "chat.completion",
-        "created": int(time.time_ns()),
+        "created": int(time.time()),
         "model": default_bot,
         "choices": [
             {
