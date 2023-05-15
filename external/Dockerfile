@@ -8,6 +8,8 @@ COPY . .
 
 RUN pip install -r requirements.txt
 
+RUN pip install uwsgi
+
 EXPOSE 5000
 
 CMD [ "uwsgi", "--ini", "uwsgi.ini" ]

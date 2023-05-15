@@ -3,7 +3,6 @@ import envtoml as toml
 import os
 import sys
 from flask import Flask, request, stream_with_context, Response
-from flask_sock import Sock
 from poe import Client
 
 poe.headers = {
@@ -27,73 +26,65 @@ config_path = os.path.join(file_dir, "config.toml")
 config = toml.load(config_path)
 proxy = config["proxy"]
 timeout = config["timeout"]
-
-def get_client(token) -> Client:
-    print("Connecting to poe...")
-    client_poe = poe.Client(token, proxy=None if proxy == "" else proxy)
-    return client_poe
-
 app = Flask(__name__)
-sock = Sock(app)
-sock.init_app(app)
 client_dict = {}
 
-def _register_token(token): 
-    if token not in client_dict.keys():
-        try:
-            c = get_client(token)
-            client_dict[token] = c
-            return "ok"
-        except Exception as exception:
-            print("Failed to connect to poe due to " + str(exception))
-            return "failed: " + str(exception)
-    else:
-        return "exist"
+
+def _get_client(token: str) -> Client:
+  print("Connecting to poe...")
+  client_poe = poe.Client(token, proxy=None if proxy == "" else proxy)
+  return client_poe
+
+
+
+def _register_token(token):
+  if token not in client_dict.keys():
+    try:
+      c = _get_client(token)
+      client_dict[token] = c
+      return "ok"
+    except Exception as exception:
+      print("Failed to connect to poe due to " + str(exception))
+      return "failed: " + str(exception)
+  else:
+    return "exist"
+
+
+def _get_config():
+  bot = 'a2' if request.values['bot'] == None else request.values['bot']
+  token = request.values['token']
+  content = request.values['content']
+  return token, bot, content
 
 @app.route('/add_token', methods=['GET', 'POST'])
 def add_token():
-    token = request.values['token']
-    return _register_token(token)
+  token = request.values['token']
+  return _register_token(token)
 
 
 @app.route('/ask', methods=['GET', 'POST'])
 def ask():
-    token = request.values['token']
-    bot = request.values['bot']
-    content = request.values['content']
-    _register_token(token)
-    client = client_dict[token]
-    for chunk in client.send_message(bot, content, with_chat_break=True, timeout=timeout):
-        pass
-    return Response(chunk["text"].strip(), content_type="text/plain")
+  token, bot, content = _get_config()
+  _register_token(token)
+  client = client_dict[token]
+  for chunk in client.send_message(bot, content, with_chat_break=True, timeout=timeout):
+    pass
+  return Response(chunk["text"].strip(), content_type="text/plain")
+
 
 @app.route('/ask_stream', methods=['GET', 'POST'])
 def ask_stream():
-    token = request.values['token']
-    bot = request.values['bot']
-    content = request.values['content']
-    _register_token(token)
-    client = client_dict[token]
+  token, bot, content = _get_config()
+  _register_token(token)
+  client = client_dict[token]
 
-    @stream_with_context
-    def generate():
-        for chunk in client.send_message(bot, content, with_chat_break=True, timeout=timeout):
-            yield chunk["text_new"]
-
-    return Response(generate(), content_type="text/plain")
-
-
-@sock.route('/stream')
-def stream(ws):
-    token = ws.receive()
-    bot = ws.receive()
-    content = ws.receive()
-    _register_token(token)
-    client = client_dict[token]
+  @stream_with_context
+  def generate():
     for chunk in client.send_message(bot, content, with_chat_break=True, timeout=timeout):
-        ws.send(chunk["text_new"])
-    ws.close()
+      yield chunk["text_new"]
+
+  return Response(generate(), content_type="text/plain")
 
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0")
+  app.run(host="0.0.0.0")
