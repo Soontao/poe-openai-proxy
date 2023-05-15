@@ -4,11 +4,12 @@ import sys
 import uuid
 import json
 import time
+import tiktoken
 from werkzeug.exceptions import HTTPException
 from flask import Flask, request, stream_with_context, Response
 from poe import Client
 
-
+tiktoken_encoding = tiktoken.get_encoding("cl100k_base")
 proxy = os.environ.get("PROXY", None)
 default_bot = os.environ.get("DEFAULT_BOT", "a2")
 timeout = int(os.environ.get("TIMEOUT", '30'), 10)
@@ -86,7 +87,6 @@ def chat_completion():
   stream = body.get("stream", False)
   content = "\n".join(
       map(lambda m: "{}: {}".format(m.get("role"), m.get("content")), messages))
-
   if stream:
     def stream():
       for chunk in client.send_message(default_bot, content, with_chat_break=True, timeout=timeout):
@@ -94,8 +94,13 @@ def chat_completion():
     return Response(stream(), mimetype='text/event-stream')
 
   else:
+    
     for chunk in client.send_message(default_bot, content, with_chat_break=True, timeout=timeout):
       pass
+    resp_content = chunk['text'].strip()
+    prompt_tokens = len(tiktoken_encoding.encode(content))
+    completion_tokens = len(tiktoken_encoding.encode(resp_content))
+    
     return {
         "id": uuid.uuid4(),
         "object": "chat.completion",
@@ -106,15 +111,15 @@ def chat_completion():
                 "index": 0,
                 "message": {
                     "role": "assistant",
-                    "content": chunk['text'].strip()
+                    "content": resp_content
                 },
                 "finish_reason": "stop"
             }
         ],
         "usage": {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens
         }
     }
 
