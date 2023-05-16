@@ -1,9 +1,15 @@
-FROM golang:1.20-alpine
+FROM python:3.9-alpine
 
 WORKDIR /app
+
+RUN apk add build-base linux-headers
+
 COPY . .
 
-RUN go build 
+RUN pip install -r requirements.txt
 
-EXPOSE 3700
-CMD [ "/app/poe-openai-proxy" ]
+RUN pip install uwsgi
+
+EXPOSE 5000
+
+CMD [ "uwsgi", "--ini", "uwsgi.ini" ]
