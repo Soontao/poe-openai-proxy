@@ -14,6 +14,7 @@ class ResourcePool:
         if len(list(filter(lambda c: c.token == token, self.pool))) > 0:
             return
         self.pool.append(_get_client(token))
+        # TODO: notify other cond
 
     def get_resource(self):
         with self.lock:
