@@ -1,45 +1,32 @@
-import poe
 import os
 import sys
 import uuid
 import json
 import time
 import tiktoken
+from openai_data import build_chunk_data, build_chat_comp_data
 from werkzeug.exceptions import HTTPException
 from flask import Flask, request, stream_with_context, Response
-from poe import Client
+from poe_utils import _get_client, _register_token, poe_client
 
 tiktoken_encoding = tiktoken.get_encoding("cl100k_base")
-proxy = os.environ.get("PROXY", None)
 default_bot = os.environ.get("DEFAULT_BOT", "a2")
 timeout = int(os.environ.get("TIMEOUT", "30"), 10)
 app = Flask(__name__)
 
-clients = {}
+
+def _uuid():
+    return "poe_{}".format(str(uuid.uuid4()))
 
 
-def _get_client(token: str) -> Client:
-    app.logger.info("Connecting to poe...")
-    return poe.Client(token, proxy=proxy)
-
-
-def _register_token(token: str) -> Client:
-    if token not in clients.keys():
-        c = _get_client(token)
-        clients[token] = c
-        app.logger.info(
-            "register client for token xxxx{}xxxx successful".format(token[4:-4])
-        )
-        return c
-    else:
-        return clients.get(token)
+def _now():
+    return int(time.time() * 1000)
 
 
 def _get_req_config():
     bot = request.values.get("bot", default_bot)
-    token = request.values.get("token")
     content = request.values.get("content")
-    return token, bot, content
+    return bot, content
 
 
 @app.route("/", methods=["GET"])
@@ -59,95 +46,108 @@ def register_token():
 
 @app.route("/ask", methods=["GET", "POST"])
 def ask():
-    token, bot, content = _get_req_config()
-    client = _register_token(token)
-    for chunk in client.send_message(
-        bot, content, with_chat_break=True, timeout=timeout
-    ):
-        pass
-    return Response(chunk["text"].strip(), content_type="text/plain")
+    bot, content = _get_req_config()
+    with poe_client() as client:
+        for chunk in client.send_message(
+            bot, content, with_chat_break=True, timeout=timeout
+        ):
+            pass
+        return Response(chunk["text"].strip(), content_type="text/plain")
 
 
 @app.route("/ask_stream", methods=["GET", "POST"])
 def ask_stream():
-    token, bot, content = _get_req_config()
+    bot, content = _get_req_config()
+
+    with poe_client() as client:
+
+        @stream_with_context
+        def generate_response():
+            for chunk in client.send_message(
+                bot, content, with_chat_break=True, timeout=timeout
+            ):
+                yield chunk["text_new"]
+
+        return Response(generate_response(), content_type="text/plain")
+
+
+@app.post("/v1/completions")
+def completion():
+    token = request.headers.get("authorization").removeprefix("Bearer ")
     client = _register_token(token)
+    body = request.get_json()
+    prompt = body.get("prompt")
+    stream = body.get("stream", False)
+    model = body.get("model", default_bot)
+    id = _uuid()
+    created = _now()
+    with poe_client() as client:
+        if stream:
 
-    @stream_with_context
-    def generate_response():
-        for chunk in client.send_message(
-            bot, content, with_chat_break=True, timeout=timeout
-        ):
-            yield chunk["text_new"]
+            def stream():
+                for chunk in client.send_message(
+                    default_bot, content, with_chat_break=True, timeout=timeout
+                ):
+                    delta_content = json.dumps(
+                        build_chunk_data(id, created, model, chunk["text_new"])
+                    )
+                    yield "data: {}\r\n\r\n".format(delta_content)
+                yield "data: [DONE]\r\n\r\n"
 
-    return Response(generate_response(), content_type="text/plain")
+            return Response(stream(), mimetype="text/event-stream")
+
+        else:
+            for chunk in client.send_message("capybara", message):
+                pass
+            text = chunk["text"].strip()
+            prop_len = len(tiktoken_encoding.encode(prompt))
+            comp_len = len(tiktoken_encoding.encode(text))
+            total_tokens = comp_len + prop_len
+
+            return build_comp_data(
+                id, created, model, text, prop_len, comp_len, total_tokens
+            )
 
 
 @app.post("/v1/chat/completions")
 def chat_completion():
-    token = request.headers.get("authorization").removeprefix("Bearer ")
-    client = _register_token(token)
     body = request.get_json()
     messages = body.get("messages")
+    model = body.get("model", default_bot)
     stream = body.get("stream", False)
     content = "\n".join(
         map(lambda m: "{}: {}".format(m.get("role"), m.get("content")), messages)
     )
-    id = str(uuid.uuid4())
-    created = int(time.time() * 1000)
-    if stream:
+    id = _uuid()
+    created = _now()
 
-        def stream():
+    with poe_client() as client:
+        if stream:
+
+            def stream():
+                for chunk in client.send_message(
+                    default_bot, content, with_chat_break=True, timeout=timeout
+                ):
+                    delta_content = json.dumps(
+                        build_chunk_data(id, created, model, chunk["text_new"])
+                    )
+                    yield "data: {}\r\n\r\n".format(delta_content)
+                yield "data: [DONE]\r\n\r\n"
+
+            return Response(stream(), mimetype="text/event-stream")
+
+        else:
             for chunk in client.send_message(
                 default_bot, content, with_chat_break=True, timeout=timeout
             ):
-                delta_content = json.dumps(
-                    {
-                        "id": id,
-                        "object": "chat.completion.chunk",
-                        "created": created,
-                        "model": "gpt-3.5-turbo-0301",
-                        "choices": [
-                            {
-                                "delta": {"content": chunk["text_new"]},
-                                "index": 0,
-                                "finish_reason": "stop",
-                            }
-                        ],
-                    }
-                )
-                yield "data: {}\r\n\r\n".format(delta_content)
-            yield "data: [DONE]\r\n\r\n"
+                pass
+            resp_content = chunk["text"].strip()
+            prompt_tokens = len(tiktoken_encoding.encode(content))
+            completion_tokens = len(tiktoken_encoding.encode(resp_content))
 
-        return Response(stream(), mimetype="text/event-stream")
-
-    else:
-        for chunk in client.send_message(
-            default_bot, content, with_chat_break=True, timeout=timeout
-        ):
-            pass
-        resp_content = chunk["text"].strip()
-        prompt_tokens = len(tiktoken_encoding.encode(content))
-        completion_tokens = len(tiktoken_encoding.encode(resp_content))
-
-        return {
-            "id": id,
-            "object": "chat.completion",
-            "created": created,
-            "model": default_bot,
-            "choices": [
-                {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": resp_content},
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens,
-            },
-        }
+            return build_chat_comp_data(
+                id, created, model, resp_content, prompt_tokens, completion_tokens
+            )
 
 
 @app.errorhandler(HTTPException)
