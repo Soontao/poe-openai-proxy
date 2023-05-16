@@ -11,20 +11,23 @@ class ResourcePool:
 
     def make_resource(self, token):
         """make new resource into pool"""
-        if len(list(filter(lambda c: c.token == token, self.pool))) > 0:
-            return
-        self.pool.append(_get_client(token))
-        # TODO: notify other cond
+        with self.cond:
+            if len(list(filter(lambda c: c.token == token, self.pool))) > 0:
+                return
+            self.pool.append(_get_client(token))
+            self.cond.notify()
 
     def get_resource(self):
-        with self.lock:
+        with self.cond:
             if len(self.pool) == 0:
-                self.cond.wait()  # wait return at least one resource
+                # wait return at least one resource
+                self.cond.wait()
             return self.pool.pop()
 
     def release_resource(self, resource):
-        with self.lock:
+        with self.cond:
             self.pool.append(resource)
+            self.cond.notify()
 
 
 class Resource:
